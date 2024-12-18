@@ -3,7 +3,6 @@ const { Analytics } = require('@segment/analytics-node');
 const { OpenAI } = require("openai");
 
 exports.handler = async function(context, event, callback) {
-    
     const { 
         To: toNumber, 
         From: fromNumber, 
@@ -15,11 +14,13 @@ exports.handler = async function(context, event, callback) {
 
     // Initialize Twilio, Segment, OpenAI clients
     const client = context.getTwilioClient();
+    
     //const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
     const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
 
     // instantiation
     const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
+
 
     // Define the credit card offering for the AI to reference
     const offering = `
@@ -104,38 +105,45 @@ exports.handler = async function(context, event, callback) {
     `;
 
     try {
+        console.log("Starting handler function...");
+
         // Get or create a conversation between the customer and the AI assistant
         const conversationSid = await getOrCreateConversation(client, fromNumber, toNumber, messageBody);
         console.log("Conversation SID:", conversationSid);
+
         
         // Retrieve messages from the conversation
         const messages = await client.conversations.v1.conversations(conversationSid).messages.list({ limit: 20 });
+        console.log("Messages got");
 
         // Format the existing messages in the conversation for OpenAI
         const formattedMessages = messages.map(message => ({
             role: message.author === 'system' ? 'assistant' : 'user',
             content: message.body
         }));
+        console.log("Messages formatted");
 
         // Set the system messages for OpenAI to guide response
         const systemMessages = getSystemMessages(WhatsappProfileName, AdReferralBody, offering);
+        console.log("System messages set");
         
         // Get the AI response and send it to the customer
         const aiResponse = await createChatCompletion(openai, formattedMessages, systemMessages);
         await sendMessage(client, conversationSid, aiResponse);
+        console.log("AI response sent");
 
         // Analyze the conversation to determine if the customer has chosen a credit card
         const hasChosenCreditCard = await analyzeConversation(openai, formattedMessages, systemMessages, 
-            `Does this conversation indicate that the customer has chosen a credit card? 
-            Answer with "yes" or "no".`
-        );
+            `Does this conversation indicate that the customer has chosen a credit card? Answer with "yes" or "no".`);
+
+        console.log("Has chosen credit card:", hasChosenCreditCard);
 
         // Analyze the conversation to determine if the customer wants to escalate to a real person
         const escalationRequest = await analyzeConversation(openai, formattedMessages, systemMessages, 
             `Does this conversation indicate that the customer wants to escalate to a manager or speak to real person instead of the AI assistant they are currently speaking with? 
             Answer with "yes" or "no".`
         );
-        
+
         // Analyze the conversation to determine which credit card the customer seems to be the best fit for
         let creditCardChoice;
         if (hasChosenCreditCard.toLowerCase() === 'yes') {
@@ -146,8 +154,8 @@ exports.handler = async function(context, event, callback) {
         }
 
         // Write the customer traits to Segment
-        //await writeTraitsToSegment(context.SEGMENT_WRITE_KEY, fromNumber, { 
         await writeTraitsToSegment(analytics, fromNumber, { 
+        //await writeTraitsToSegment(context.SEGMENT_WRITE_KEY, fromNumber, { 
             WhatsappProfileName, 
             AdReferralBody, 
             AdReferralSourceURL, 
@@ -155,8 +163,10 @@ exports.handler = async function(context, event, callback) {
             creditCardChoice, 
             escalationRequest 
         });
+
+        //callback(null, "Success");
     } catch (error) {
-        console.error("Error:", error);
+        console.error("Error in handler function:", error);
         callback(error);
     }
 };
@@ -210,34 +220,55 @@ function getSystemMessages(WhatsappProfileName, AdReferralBody, offering) {
     ];
 }
 
+// Example of adding a timeout to an API call
 async function createChatCompletion(openai, messages, systemMessages) {
-    const chatCompletion = await openai.chat.completions.create({
-        messages: systemMessages.concat(messages),
-        model: 'gpt-4',
-        temperature: 0.8,
-        max_tokens: 200,
-        top_p: 0.9,
-        n: 1,
-    });
-
-    return chatCompletion.choices[0].message.content;
+    try {
+        const response = await Promise.race([
+            openai.chat.completions.create({
+                messages: systemMessages.concat(messages),
+                model: 'gpt-4',
+                temperature: 0.8,
+                max_tokens: 200,
+                top_p: 0.9,
+                n: 1,
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), 10000)) // 10 seconds timeout
+        ]);
+        return response.choices[0].message.content;
+    } catch (error) {
+        console.error("Error creating chat completion:", error);
+        throw error;
+    }
 }
 
+// Example of adding a timeout to an API call
 async function analyzeConversation(openai, messages, systemMessages, question) {
-    const response = await openai.chat.completions.create({
-        messages: systemMessages.concat(messages, [{ role: "user", content: question }]),
-        model: 'gpt-4',
-        temperature: 0.8,
-        max_tokens: 200,
-        top_p: 0.9,
-        n: 1,
-    });
-
-    return response.choices[0].message.content;
+    try {
+        const response = await Promise.race([
+            openai.chat.completions.create({
+                messages: systemMessages.concat(messages, [{ role: "user", content: question }]),
+                model: 'gpt-4',
+                temperature: 0.8,
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), 10000)) // 10 seconds timeout
+        ]);
+        return response.choices[0].message.content;
+    } catch (error) {
+        console.error("Error analyzing conversation:", error);
+        throw error;
+    }
 }
-
-//async function writeTraitsToSegment(SEGMENT_WRITE_KEY, userId, traits) {
 async function writeTraitsToSegment(analytics, userId, traits) {
+//async function writeTraitsToSegment(SEGMENT_WRITE_KEY, userId, traits) {
+
+    analytics.identify({
+        userId:'f4ca124298',
+        traits: {
+          name: 'Alex Chen',
+          email: 'mbolton@example.com',
+          createdAt: new Date('2014-06-14T02:00:19.467Z')
+        }
+      });
     /*
     const endpoint = `https://api.segment.io/v1/identify`;
     const myHeaders = {
@@ -252,21 +283,6 @@ async function writeTraitsToSegment(analytics, userId, traits) {
     };
 
     await fetch(endpoint, requestOptions);*/
-
-    /*analytics.identify({
-        userId: userId,
-        traits: traits
-      });*/
-    analytics.identify({
-        userId:'f4ca124298',
-        traits: {
-          name: 'Michael Bolton',
-          email: 'mbolton@example.com',
-          createdAt: new Date('2014-06-14T02:00:19.467Z')
-        }
-      });
-     
-      
 }
 
 async function sendMessage(client, conversationSid, aiResponse) {

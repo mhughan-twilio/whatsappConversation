@@ -15,6 +15,7 @@ exports.handler = async function(context, event, callback) {
 
     // Initialize Twilio, Segment, OpenAI clients
     const client = context.getTwilioClient();
+
     //const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
     const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
 
@@ -260,7 +261,7 @@ async function writeTraitsToSegment(analytics, userId, traits) {
     analytics.identify({
         userId:'f4ca124298',
         traits: {
-          name: 'Michael Bolton',
+          name: 'Sandy',
           email: 'mbolton@example.com',
           createdAt: new Date('2014-06-14T02:00:19.467Z')
         }

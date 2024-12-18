@@ -15,8 +15,11 @@ exports.handler = async function(context, event, callback) {
 
     // Initialize Twilio, Segment, OpenAI clients
     const client = context.getTwilioClient();
-    const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
+    //const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
     const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
+
+    // instantiation
+    const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
 
     // Define the credit card offering for the AI to reference
     const offering = `
@@ -143,8 +146,8 @@ exports.handler = async function(context, event, callback) {
         }
 
         // Write the customer traits to Segment
-        await writeTraitsToSegment(context.SEGMENT_WRITE_KEY, fromNumber, { 
-        //await writeTraitsToSegment(analytics, fromNumber, { 
+        //await writeTraitsToSegment(context.SEGMENT_WRITE_KEY, fromNumber, { 
+        await writeTraitsToSegment(analytics, fromNumber, { 
             WhatsappProfileName, 
             AdReferralBody, 
             AdReferralSourceURL, 
@@ -233,9 +236,9 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
     return response.choices[0].message.content;
 }
 
-async function writeTraitsToSegment(SEGMENT_WRITE_KEY, userId, traits) {
-//async function writeTraitsToSegment(analytics, userId, traits) {
-    
+//async function writeTraitsToSegment(SEGMENT_WRITE_KEY, userId, traits) {
+async function writeTraitsToSegment(analytics, userId, traits) {
+    /*
     const endpoint = `https://api.segment.io/v1/identify`;
     const myHeaders = {
         'Authorization': `Basic ${Buffer.from(SEGMENT_WRITE_KEY + ':').toString('base64')}`
@@ -248,20 +251,20 @@ async function writeTraitsToSegment(SEGMENT_WRITE_KEY, userId, traits) {
         body: JSON.stringify({ userId, traits })
     };
 
-    await fetch(endpoint, requestOptions);
+    await fetch(endpoint, requestOptions);*/
 
     /*analytics.identify({
         userId: userId,
         traits: traits
-      });
-    /*analytics.identify({
+      });*/
+    analytics.identify({
         userId:'f4ca124298',
         traits: {
           name: 'Michael Bolton',
           email: 'mbolton@example.com',
           createdAt: new Date('2014-06-14T02:00:19.467Z')
         }
-      });*/
+      });
      
       
 }
