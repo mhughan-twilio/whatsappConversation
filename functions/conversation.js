@@ -3,10 +3,12 @@ const { Analytics } = require('@segment/analytics-node');
 const { OpenAI } = require("openai");
 
 exports.handler = async function(context, event, callback) {
+
     const { 
         To: toNumber, 
         From: fromNumber, 
         Body: messageBody, 
+        ProfileName: name, 
         ProfileName: WhatsappProfileName, 
         ReferralBody: AdReferralBody, 
         ReferralSourceURL: AdReferralSourceURL
@@ -14,17 +16,171 @@ exports.handler = async function(context, event, callback) {
 
     // Initialize Twilio, Segment, OpenAI clients
     const client = context.getTwilioClient();
-    
-    //const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
     const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
-
-    // instantiation
     const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
 
-
     // Define the credit card offering for the AI to reference
-    const offering = `
-    Here’s a more detailed breakdown of the Creo Bank credit card options, aligned with your example format:
+    const offering = getCreditCardOffering();
+    
+    try {
+
+        // Get or create a conversation between the customer and the AI assistant
+        const conversationSid = await getOrCreateConversation(client, fromNumber, toNumber, messageBody);
+        
+        // Retrieve messages from the conversation
+        const messages = await client.conversations.v1.conversations(conversationSid).messages.list({ limit: 20 });
+
+        // Format the existing messages in the conversation for OpenAI
+        const formattedMessages = messages.map(message => ({
+            role: message.author === 'system' ? 'assistant' : 'user',
+            content: message.body
+        }));
+
+        // Set the system messages for OpenAI to guide response
+        const systemMessages = getSystemMessages(WhatsappProfileName, AdReferralBody, offering);
+        
+        // Get the AI response and send it to the customer
+        const aiResponse = await createChatCompletion(openai, formattedMessages, systemMessages);
+        await sendMessage(client, conversationSid, aiResponse);
+
+        // Analyze the conversation to determine if the customer has chosen a credit card
+        const hasChosenCreditCard = await analyzeConversation(openai, formattedMessages, systemMessages, 
+            `Does this conversation indicate that the customer has chosen a credit card? Answer with "yes" or "no".`);
+
+        // Analyze the conversation to determine if the customer wants to escalate to a real person
+        const escalationRequest = await analyzeConversation(openai, formattedMessages, systemMessages, 
+            `Does this conversation indicate that the customer wants to escalate to a manager or speak to real person instead of the AI assistant they are currently speaking with? 
+            Answer with "yes" or "no".`
+        );
+
+        // Analyze the conversation to determine which credit card the customer seems to be the best fit for
+        let creditCardChoice;
+        if (hasChosenCreditCard.toLowerCase() === 'yes') {
+            creditCardChoice = await analyzeConversation(openai, formattedMessages, systemMessages, 
+                `Which credit card does this customer seem to be the best fit for? 
+                Answer with just the name of the Credit Card from: ${offering}`
+            );
+        };
+
+        // Write the customer traits to Segment
+        await writeTraitsToSegment(analytics, fromNumber, { 
+            name,
+            messageBody,
+            WhatsappProfileName, 
+            AdReferralBody, 
+            AdReferralSourceURL, 
+            hasChosenCreditCard, 
+            creditCardChoice, 
+            escalationRequest 
+        });
+
+    } catch (error) {
+        console.error("Error in handler function:", error);
+        callback(error);
+    }
+};
+
+async function getOrCreateConversation(client, fromNumber, toNumber, messageBody) {
+    const participantConversations = await client.conversations.v1.participantConversations.list({
+        address: fromNumber,
+        'participantMessagingBinding.proxy_address': toNumber,
+    });
+
+    if (participantConversations.length === 0) {
+        const conversation = await client.conversations.v1.conversations.create({ friendlyName: 'New Conversation' });
+        const conversationSid = conversation.sid;
+
+        await client.conversations.v1.conversations(conversationSid).participants.create({
+            'messagingBinding.address': fromNumber,
+            'messagingBinding.proxyAddress': toNumber
+        });
+
+        await client.conversations.v1.conversations(conversationSid).messages.create({
+            body: messageBody,
+            author: fromNumber
+        });
+
+        return conversationSid;
+    } else {
+        return participantConversations[0].conversationSid;
+    }
+}
+
+function getSystemMessages(WhatsappProfileName, AdReferralBody, offering) {
+    return [
+        {
+            role: "system",
+            content: `
+            You are an AI assistant for Creo Bank talking to a customer, ${WhatsappProfileName} who clicked on an ad with the content: ${AdReferralBody}.
+            The conversation is taking place over WhatsApp so make responses easy to read over mobile and formatted appropriately for whatsapp.
+            You have the credit card options: ${offering}. 
+            Provide engaging but concise response.
+            Response must be fewer than 50 words. 
+            Ask questions to determine which Credit Card is the best fit for the customer. 
+            Once it seems the customer has agreed to a given credit card, ask them to click on a link to apply for the card (www.creobank.com/apply).
+            Do not ask for personally identifying information.
+            If the customer wants to escalate to a manager or speak to a real person, provide a response that indicates the escalation process.
+            Only answer questions that are related to the credit card options provided. Do not hallucinate or provide false information.`
+        },
+        {
+            role: "user",
+            content: 'We are having a casual conversation over chat so please provide engaging but concise responses.'
+        }
+    ];
+}
+
+async function createChatCompletion(openai, messages, systemMessages) {
+    try {
+        const response = await openai.chat.completions.create({
+            messages: systemMessages.concat(messages),
+            model: 'gpt-4',
+            temperature: 0.8,
+            max_tokens: 200,
+            top_p: 0.9,
+            n: 1,
+        });
+        return response.choices[0].message.content;
+    } catch (error) {
+        console.error("Error creating chat completion:", error);
+        throw error;
+    }
+}
+
+async function analyzeConversation(openai, messages, systemMessages, question) {
+    try {
+        const response = await openai.chat.completions.create({
+            messages: systemMessages.concat(messages, [{ role: "user", content: question }]),
+            model: 'gpt-4',
+            temperature: 0.8,
+        });
+        return response.choices[0].message.content;
+    } catch (error) {
+        console.error("Error analyzing conversation:", error);
+        throw error;
+    }
+}
+async function writeTraitsToSegment(analytics, userId, traits) {
+    try {
+        analytics.identify({
+            userId: userId,
+            traits: traits
+        });
+    } catch (error) {
+        console.error("Error writing traits to segment:", error);
+        throw error;
+    }
+}
+
+async function sendMessage(client, conversationSid, aiResponse) {
+    await client.conversations.v1.conversations(conversationSid).messages.create({
+        body: aiResponse,
+        author: 'system'
+    });
+}
+
+function getCreditCardOffering() {
+    return `
+    Here’s a more detailed breakdown of the Creo Bank credit card options:
 
     1. Everyday Rewards Credit Card (Cashback Focus)
     Best For: Customers who make regular everyday purchases and want to earn cashback rewards.
@@ -103,191 +259,4 @@ exports.handler = async function(context, event, callback) {
     No annual fee ensures affordability for customers in financial recovery.
     Cashback rewards are a bonus for cardholders working to improve their credit score.    
     `;
-
-    try {
-        console.log("Starting handler function...");
-
-        // Get or create a conversation between the customer and the AI assistant
-        const conversationSid = await getOrCreateConversation(client, fromNumber, toNumber, messageBody);
-        console.log("Conversation SID:", conversationSid);
-
-        
-        // Retrieve messages from the conversation
-        const messages = await client.conversations.v1.conversations(conversationSid).messages.list({ limit: 20 });
-        console.log("Messages got");
-
-        // Format the existing messages in the conversation for OpenAI
-        const formattedMessages = messages.map(message => ({
-            role: message.author === 'system' ? 'assistant' : 'user',
-            content: message.body
-        }));
-        console.log("Messages formatted");
-
-        // Set the system messages for OpenAI to guide response
-        const systemMessages = getSystemMessages(WhatsappProfileName, AdReferralBody, offering);
-        console.log("System messages set");
-        
-        // Get the AI response and send it to the customer
-        const aiResponse = await createChatCompletion(openai, formattedMessages, systemMessages);
-        await sendMessage(client, conversationSid, aiResponse);
-        console.log("AI response sent");
-
-        // Analyze the conversation to determine if the customer has chosen a credit card
-        const hasChosenCreditCard = await analyzeConversation(openai, formattedMessages, systemMessages, 
-            `Does this conversation indicate that the customer has chosen a credit card? Answer with "yes" or "no".`);
-
-        console.log("Has chosen credit card:", hasChosenCreditCard);
-
-        // Analyze the conversation to determine if the customer wants to escalate to a real person
-        const escalationRequest = await analyzeConversation(openai, formattedMessages, systemMessages, 
-            `Does this conversation indicate that the customer wants to escalate to a manager or speak to real person instead of the AI assistant they are currently speaking with? 
-            Answer with "yes" or "no".`
-        );
-
-        // Analyze the conversation to determine which credit card the customer seems to be the best fit for
-        let creditCardChoice;
-        if (hasChosenCreditCard.toLowerCase() === 'yes') {
-            creditCardChoice = await analyzeConversation(openai, formattedMessages, systemMessages, 
-                `Which credit card does this customer seem to be the best fit for? 
-                Answer with just the name of the Credit Card from: ${offering}`
-            );
-        }
-
-        // Write the customer traits to Segment
-        await writeTraitsToSegment(analytics, fromNumber, { 
-        //await writeTraitsToSegment(context.SEGMENT_WRITE_KEY, fromNumber, { 
-            WhatsappProfileName, 
-            AdReferralBody, 
-            AdReferralSourceURL, 
-            hasChosenCreditCard, 
-            creditCardChoice, 
-            escalationRequest 
-        });
-
-        //callback(null, "Success");
-    } catch (error) {
-        console.error("Error in handler function:", error);
-        callback(error);
-    }
-};
-
-async function getOrCreateConversation(client, fromNumber, toNumber, messageBody) {
-    const participantConversations = await client.conversations.v1.participantConversations.list({
-        address: fromNumber,
-        'participantMessagingBinding.proxy_address': toNumber,
-    });
-
-    if (participantConversations.length === 0) {
-        const conversation = await client.conversations.v1.conversations.create({ friendlyName: 'New Conversation' });
-        const conversationSid = conversation.sid;
-
-        await client.conversations.v1.conversations(conversationSid).participants.create({
-            'messagingBinding.address': fromNumber,
-            'messagingBinding.proxyAddress': toNumber
-        });
-
-        await client.conversations.v1.conversations(conversationSid).messages.create({
-            body: messageBody,
-            author: fromNumber
-        });
-
-        return conversationSid;
-    } else {
-        return participantConversations[0].conversationSid;
-    }
-}
-
-function getSystemMessages(WhatsappProfileName, AdReferralBody, offering) {
-    return [
-        {
-            role: "system",
-            content: `
-            You are an AI assistant for Creo Bank talking to a customer, ${WhatsappProfileName} who clicked on an ad with the content: ${AdReferralBody}.
-            The conversation is taking place over WhatsApp so make responses easy to read over mobile and formatted appropriately for whatsapp.
-            You have the credit card options: ${offering}. 
-            Provide engaging but concise response.
-            Response must be fewer than 50 words. 
-            Ask questions to determine which Credit Card is the best fit for the customer. 
-            Once it seems the customer has agreed to a given credit card, ask them to click on a link to apply for the card (www.creobank.com/apply).
-            Do not ask for personally identifying information.
-            If the customer wants to escalate to a manager or speak to a real person, provide a response that indicates the escalation process.
-            Only answer questions that are related to the credit card options provided. Do not hallucinate or provide false information.`
-        },
-        {
-            role: "user",
-            content: 'We are having a casual conversation over chat so please provide engaging but concise responses.'
-        }
-    ];
-}
-
-// Example of adding a timeout to an API call
-async function createChatCompletion(openai, messages, systemMessages) {
-    try {
-        const response = await Promise.race([
-            openai.chat.completions.create({
-                messages: systemMessages.concat(messages),
-                model: 'gpt-4',
-                temperature: 0.8,
-                max_tokens: 200,
-                top_p: 0.9,
-                n: 1,
-            }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), 10000)) // 10 seconds timeout
-        ]);
-        return response.choices[0].message.content;
-    } catch (error) {
-        console.error("Error creating chat completion:", error);
-        throw error;
-    }
-}
-
-// Example of adding a timeout to an API call
-async function analyzeConversation(openai, messages, systemMessages, question) {
-    try {
-        const response = await Promise.race([
-            openai.chat.completions.create({
-                messages: systemMessages.concat(messages, [{ role: "user", content: question }]),
-                model: 'gpt-4',
-                temperature: 0.8,
-            }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), 10000)) // 10 seconds timeout
-        ]);
-        return response.choices[0].message.content;
-    } catch (error) {
-        console.error("Error analyzing conversation:", error);
-        throw error;
-    }
-}
-async function writeTraitsToSegment(analytics, userId, traits) {
-//async function writeTraitsToSegment(SEGMENT_WRITE_KEY, userId, traits) {
-
-    analytics.identify({
-        userId:'f4ca124298',
-        traits: {
-          name: 'Alex Chen',
-          email: 'mbolton@example.com',
-          createdAt: new Date('2014-06-14T02:00:19.467Z')
-        }
-      });
-    /*
-    const endpoint = `https://api.segment.io/v1/identify`;
-    const myHeaders = {
-        'Authorization': `Basic ${Buffer.from(SEGMENT_WRITE_KEY + ':').toString('base64')}`
-    };
-
-    const requestOptions = {
-        method: "POST",
-        headers: myHeaders,
-        redirect: "follow",
-        body: JSON.stringify({ userId, traits })
-    };
-
-    await fetch(endpoint, requestOptions);*/
-}
-
-async function sendMessage(client, conversationSid, aiResponse) {
-    await client.conversations.v1.conversations(conversationSid).messages.create({
-        body: aiResponse,
-        author: 'system'
-    });
 }
