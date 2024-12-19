@@ -1,9 +1,9 @@
-const twilio = require('twilio');
 const { Analytics } = require('@segment/analytics-node');
 const { OpenAI } = require("openai");
 
 exports.handler = async function(context, event, callback) {
-
+    console.log("Event: ", JSON.stringify(event));
+    
     // Extract the necessary information from the incoming event
     const { 
         To: toNumber, 
@@ -11,60 +11,48 @@ exports.handler = async function(context, event, callback) {
         Body: lastMessage, 
         ProfileName: name, 
         ReferralBody: AdReferralBody, 
-        ReferralSourceURL: AdReferralSourceURL
+        ReferralSourceUrl: AdReferralSourceURL
     } = event;
-    console.log("lastMessage:", lastMessage); 
 
     // Initialize Twilio, Segment, OpenAI clients
     const client = context.getTwilioClient();
     const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
     const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY }).on('error', console.error);
 
-
-
     // Define the credit card offering for the AI to reference
     const offering = getCreditCardOffering();
     
     try {
-
         // Get or create a conversation between the customer and the AI assistant
-        console.log("Getting or creating conversation...");
         const conversationSid = await getOrCreateConversation(client, fromNumber, toNumber, lastMessage);
         
         // Retrieve messages from the conversation
-        console.log("Retrieving messages from conversation...");
         const messages = await client.conversations.v1.conversations(conversationSid).messages.list({ limit: 20 });
 
         // Format the existing messages in the conversation for OpenAI
-        console.log("Formatting messages for OpenAI...");
         const formattedMessages = messages.map(message => ({
             role: message.author === 'system' ? 'assistant' : 'user',
             content: message.body
         }));
 
         // Set the system messages for OpenAI to guide response
-        console.log("Setting system messages for OpenAI...");
         const systemMessages = getSystemMessages(name, AdReferralBody, offering);
         
         // Get the AI response and send it to the customer
-        console.log("Getting AI response and sending it to the customer...");
         const aiResponse = await createChatCompletion(openai, formattedMessages, systemMessages);
         await sendMessage(client, conversationSid, aiResponse);
 
         // Analyze the conversation to determine if the customer has chosen a credit card
-        console.log("Analyzing conversation to determine if the customer has chosen a credit card...");
         const hasChosenCreditCard = await analyzeConversation(openai, formattedMessages, systemMessages, 
             `Does this conversation indicate that the customer has chosen a credit card? Answer with "yes" or "no".`);
 
         // Analyze the conversation to determine if the customer wants to escalate to a real person
-        console.log("Analyzing conversation to determine if the customer wants to escalate to a real person...");
         const escalationRequest = await analyzeConversation(openai, formattedMessages, systemMessages, 
             `Does this conversation indicate that the customer wants to escalate to a manager or speak to real person instead of the AI assistant they are currently speaking with? 
             Answer with "yes" or "no".`
         );
 
         // Analyze the conversation to determine which credit card the customer seems to be the best fit for
-        console.log("Analyzing conversation to determine which credit card the customer seems to be the best fit for...");
         let creditCardChoice;
         if (hasChosenCreditCard.toLowerCase() === 'yes') {
             creditCardChoice = await analyzeConversation(openai, formattedMessages, systemMessages, 
@@ -74,55 +62,24 @@ exports.handler = async function(context, event, callback) {
         };
 
         // Write the customer traits to Segment
-        const traits = { 
-            name,
-            lastMessage,
-            //AdReferralBody, 
-            //AdReferralSourceURL, 
-            //hasChosenCreditCard, 
-            //creditCardChoice, 
-            //escalationRequest 
-        };
-        const userId = fromNumber;
-
-        console.log("Writing traits to segment...");
         analytics.identify({
-            userId: userId,
-        traits: traits 
-            })
-
-
-
-        /*await writeTraitsToSegment(analytics, fromNumber, { 
-            name,
-            lastMessage,
-            //AdReferralBody, 
-            //AdReferralSourceURL, 
-            //hasChosenCreditCard, 
-            //creditCardChoice, 
-            //escalationRequest 
-        });*/
-        console.log("Done.");
+            userId: fromNumber,
+            traits: {
+                name,
+                lastMessage,
+                AdReferralBody, 
+                AdReferralSourceURL, 
+                hasChosenCreditCard, 
+                creditCardChoice, 
+                escalationRequest
+                } 
+            });
 
         await analytics.flush()
 
-        return {
-            statusCode: 200,
-            body: JSON.stringify(
-              {
-                message: "Go Serverless v1.0! Your function executed successfully!",
-                input: event,
-              },
-              null,
-              2
-            ),
-          };
-
-
     } catch (error) {
         console.error("Error in handler function:", error);
-        return {statusCode: 500, body: JSON.stringify({ error: error.message })};
-        //callback(error);
+        callback(error);
     }
 
 };
@@ -203,27 +160,6 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
         return response.choices[0].message.content;
     } catch (error) {
         console.error("Error analyzing conversation:", error);
-        throw error;
-    }
-}
-async function writeTraitsToSegment(analytics, userId, traits) {
-    try {
-        console.log("Writing traits to segment:", traits)
-
-        analytics.identify({
-            userId: userId,
-        traits: traits 
-            })
-        
-        /*await new Promise((resolve) =>
-            analytics.identify({
-                userId: userId,
-            traits: traits 
-                }, resolve)
-          )*/
-        console.log("Successfully wrote traits to segment. Traits: ", traits);
-    } catch (error) {
-        console.error("Error writing traits to segment:", error);
         throw error;
     }
 }
