@@ -4,15 +4,25 @@ const { OpenAI } = require("openai");
 
 exports.handler = async function(context, event, callback) {
 
+
+    // Extract the necessary information from the incoming event
+    const toNumber = event.To;
+    const fromNumber = event.From;
+    const lastMessage = event.Body;
+    const name = event.ProfileName;
+    const AdReferralBody = event.ReferralBody;
+    const AdReferralSourceURL = event.ReferralSourceURL;
+    console.log("lastMessage: ", lastMessage);
+
+/*
     const { 
         To: toNumber, 
         From: fromNumber, 
-        Body: messageBody, 
         Body: lastMessage, 
         ProfileName: name, 
         ReferralBody: AdReferralBody, 
         ReferralSourceURL: AdReferralSourceURL
-    } = event;
+    } = event;*/
 
     // Initialize Twilio, Segment, OpenAI clients
     const client = context.getTwilioClient();
@@ -25,7 +35,7 @@ exports.handler = async function(context, event, callback) {
     try {
 
         // Get or create a conversation between the customer and the AI assistant
-        const conversationSid = await getOrCreateConversation(client, fromNumber, toNumber, messageBody);
+        const conversationSid = await getOrCreateConversation(client, fromNumber, toNumber, lastMessage);
         
         // Retrieve messages from the conversation
         const messages = await client.conversations.v1.conversations(conversationSid).messages.list({ limit: 20 });
@@ -63,11 +73,12 @@ exports.handler = async function(context, event, callback) {
         };
 
         // Write the customer traits to Segment
+        console.log("writing traits to segment");
         await writeTraitsToSegment(analytics, fromNumber, { 
             name,
             lastMessage,
-            AdReferralBody, 
-            AdReferralSourceURL, 
+            //AdReferralBody, 
+            //AdReferralSourceURL, 
             hasChosenCreditCard, 
             creditCardChoice, 
             escalationRequest 
@@ -79,7 +90,7 @@ exports.handler = async function(context, event, callback) {
     }
 };
 
-async function getOrCreateConversation(client, fromNumber, toNumber, messageBody) {
+async function getOrCreateConversation(client, fromNumber, toNumber, lastMessage) {
     const participantConversations = await client.conversations.v1.participantConversations.list({
         address: fromNumber,
         'participantMessagingBinding.proxy_address': toNumber,
@@ -95,7 +106,7 @@ async function getOrCreateConversation(client, fromNumber, toNumber, messageBody
         });
 
         await client.conversations.v1.conversations(conversationSid).messages.create({
-            body: messageBody,
+            body: lastMessage,
             author: fromNumber
         });
 
@@ -160,11 +171,12 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
 }
 async function writeTraitsToSegment(analytics, userId, traits) {
     try {
-
+        console.log("writing traits to segment. Traits: ", traits);
         await analytics.identify({
             userId: userId,
             traits: traits
         });
+        console.log("Successfully wrote traits to segment. Traits: ", traits);
     } catch (error) {
         console.error("Error writing traits to segment:", error);
         throw error;

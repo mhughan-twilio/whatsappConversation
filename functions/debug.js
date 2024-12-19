@@ -1,8 +1,17 @@
-const twilio = require('twilio');
-const { OpenAI } = require("openai");
+//const twilio = require('twilio');
+const { Analytics } = require('@segment/analytics-node');
+//const { OpenAI } = require("openai");
 
 exports.handler = async function(context, event, callback) {
 
+    const lastMessage = event.Body;
+    const fromNumber = event.From;
+    const name = event.ProfileName;
+    console.log("lastMessage: ", lastMessage);
+    console.log("fromNumber: ", fromNumber);
+    console.log("name: ", name);
+
+    /*
     const { 
         To: toNumber, 
         From: fromNumber, 
@@ -10,17 +19,18 @@ exports.handler = async function(context, event, callback) {
         ProfileName: name, 
         ReferralBody: AdReferralBody, 
         ReferralSourceURL: AdReferralSourceURL
-    } = event;
+    } = event;*/
 
     // Initialize Twilio, Segment, OpenAI clients
-    const client = context.getTwilioClient();
-    const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
+    //const client = context.getTwilioClient();
+    //const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
+    const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
 
     // Define the credit card offering for the AI to reference
-    const offering = getCreditCardOffering();
+    //const offering = getCreditCardOffering();
     
     try {
-
+/*
         // Get or create a conversation between the customer and the AI assistant
         const conversationSid = await getOrCreateConversation(client, fromNumber, toNumber, lastMessage);
         
@@ -58,16 +68,17 @@ exports.handler = async function(context, event, callback) {
                 Answer with just the name of the Credit Card from: ${offering}`
             );
         };
-
+*/
         // Write the customer traits to Segment
-        await writeTraitsToSegment(context.SEGMENT_WRITE_KEY, fromNumber, {
+        console.log("Writing traits to Segment...");
+        await writeTraitsToSegment(analytics, fromNumber, { 
             name,
             lastMessage,
-            AdReferralBody, 
-            AdReferralSourceURL, 
-            hasChosenCreditCard, 
-            creditCardChoice, 
-            escalationRequest 
+            //AdReferralBody, 
+            //AdReferralSourceURL, 
+            //hasChosenCreditCard, 
+            //creditCardChoice, 
+            //escalationRequest 
         });
 
     } catch (error) {
@@ -75,7 +86,7 @@ exports.handler = async function(context, event, callback) {
         callback(error);
     }
 };
-
+/*
 async function getOrCreateConversation(client, fromNumber, toNumber, lastMessage) {
     const participantConversations = await client.conversations.v1.participantConversations.list({
         address: fromNumber,
@@ -154,30 +165,21 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
         console.error("Error analyzing conversation:", error);
         throw error;
     }
-}
-async function writeTraitsToSegment(SEGMENT_WRITE_KEY, userId, traits) {
+}*/
+async function writeTraitsToSegment(analytics, userId, traits) {
     try {
-
-        const endpoint = `https://api.segment.io/v1/identify`;
-        const myHeaders = {
-            'Authorization': `Basic ${Buffer.from(SEGMENT_WRITE_KEY + ':').toString('base64')}`
-        };
-
-        const requestOptions = {
-            method: "POST",
-            headers: myHeaders,
-            redirect: "follow",
-            body: JSON.stringify({ userId, traits })
-        };
-
-        await fetch(endpoint, requestOptions)
-
+        
+        await analytics.identify({
+            userId: userId,
+            traits: traits
+        });
+        console.log("Traits written to Segment successfully. Traits:", traits);
     } catch (error) {
         console.error("Error writing traits to segment:", error);
         throw error;
     }
 }
-
+/*
 async function sendMessage(client, conversationSid, aiResponse) {
     await client.conversations.v1.conversations(conversationSid).messages.create({
         body: aiResponse,
@@ -266,4 +268,4 @@ function getCreditCardOffering() {
     No annual fee ensures affordability for customers in financial recovery.
     Cashback rewards are a bonus for cardholders working to improve their credit score.    
     `;
-}
+}*/
