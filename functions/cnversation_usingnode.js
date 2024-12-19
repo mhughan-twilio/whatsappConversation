@@ -158,20 +158,8 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
         throw error;
     }
 }
-//async function writeTraitsToSegment(analytics, userId, traits) {
     async function writeTraitsToSegment(SEGMENT_WRITE_KEY, userId, traits) {
     try {
-        const endpoint = `https://api.segment.io/v1/identify`;
-    const myHeaders = {
-        'Authorization': `Basic ${Buffer.from(SEGMENT_WRITE_KEY + ':').toString('base64')}`
-    };
-
-    const requestOptions = {
-        method: "POST",
-        headers: myHeaders,
-        redirect: "follow",
-        body: JSON.stringify({ userId, traits })
-    };
 
     await fetch(endpoint, requestOptions)
         await analytics.identify({
