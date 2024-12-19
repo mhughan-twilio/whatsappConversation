@@ -1,5 +1,4 @@
 const twilio = require('twilio');
-const { Analytics } = require('@segment/analytics-node');
 const { OpenAI } = require("openai");
 
 exports.handler = async function(context, event, callback) {
@@ -17,7 +16,6 @@ exports.handler = async function(context, event, callback) {
     // Initialize Twilio, Segment, OpenAI clients
     const client = context.getTwilioClient();
     const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
-    const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
 
     // Define the credit card offering for the AI to reference
     const offering = getCreditCardOffering();
