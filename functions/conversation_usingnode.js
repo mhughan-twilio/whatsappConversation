@@ -12,7 +12,7 @@ exports.handler = async function(context, event, callback) {
     const name = event.ProfileName;
     const AdReferralBody = event.ReferralBody;
     const AdReferralSourceURL = event.ReferralSourceURL;
-    console.log("lastMessage: ", lastMessage);
+    console.log("lastMessage:", lastMessage);
 
 /*
     const { 
