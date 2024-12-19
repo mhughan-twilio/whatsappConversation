@@ -63,8 +63,7 @@ exports.handler = async function(context, event, callback) {
         };
 
         // Write the customer traits to Segment
-        await writeTraitsToSegment(context.SEGMENT_WRITE_KEY, fromNumber, {
-        //await writeTraitsToSegment(analytics, fromNumber, { 
+        await writeTraitsToSegment(analytics, fromNumber, { 
             name,
             lastMessage,
             AdReferralBody, 
@@ -175,11 +174,10 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
     };
 
     await fetch(endpoint, requestOptions)
-    /*
-        analytics.identify({
+        await analytics.identify({
             userId: userId,
             traits: traits
-        });*/
+        });
     } catch (error) {
         console.error("Error writing traits to segment:", error);
         throw error;
