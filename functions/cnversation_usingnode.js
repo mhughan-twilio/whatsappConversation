@@ -8,10 +8,10 @@ exports.handler = async function(context, event, callback) {
         To: toNumber, 
         From: fromNumber, 
         Body: messageBody, 
+        Body: lastMessage, 
         ProfileName: name, 
         ReferralBody: AdReferralBody, 
-        ReferralSourceURL: AdReferralSourceURL,
-        Body: lastMessage
+        ReferralSourceURL: AdReferralSourceURL
     } = event;
 
     // Initialize Twilio, Segment, OpenAI clients
@@ -161,7 +161,6 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
 async function writeTraitsToSegment(analytics, userId, traits) {
     try {
 
-    await fetch(endpoint, requestOptions)
         await analytics.identify({
             userId: userId,
             traits: traits
