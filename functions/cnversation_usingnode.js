@@ -1,4 +1,5 @@
 const twilio = require('twilio');
+const { Analytics } = require('@segment/analytics-node');
 const { OpenAI } = require("openai");
 
 exports.handler = async function(context, event, callback) {
@@ -8,14 +9,15 @@ exports.handler = async function(context, event, callback) {
         From: fromNumber, 
         Body: messageBody, 
         ProfileName: name, 
-        ProfileName: WhatsappProfileName, 
         ReferralBody: AdReferralBody, 
-        ReferralSourceURL: AdReferralSourceURL
+        ReferralSourceURL: AdReferralSourceURL,
+        Body: lastMessage
     } = event;
 
     // Initialize Twilio, Segment, OpenAI clients
     const client = context.getTwilioClient();
     const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
+    const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
 
     // Define the credit card offering for the AI to reference
     const offering = getCreditCardOffering();
@@ -35,7 +37,7 @@ exports.handler = async function(context, event, callback) {
         }));
 
         // Set the system messages for OpenAI to guide response
-        const systemMessages = getSystemMessages(WhatsappProfileName, AdReferralBody, offering);
+        const systemMessages = getSystemMessages(name, AdReferralBody, offering);
         
         // Get the AI response and send it to the customer
         const aiResponse = await createChatCompletion(openai, formattedMessages, systemMessages);
@@ -62,9 +64,9 @@ exports.handler = async function(context, event, callback) {
 
         // Write the customer traits to Segment
         await writeTraitsToSegment(context.SEGMENT_WRITE_KEY, fromNumber, {
+        //await writeTraitsToSegment(analytics, fromNumber, { 
             name,
-            messageBody,
-            WhatsappProfileName, 
+            lastMessage,
             AdReferralBody, 
             AdReferralSourceURL, 
             hasChosenCreditCard, 
@@ -104,12 +106,12 @@ async function getOrCreateConversation(client, fromNumber, toNumber, messageBody
     }
 }
 
-function getSystemMessages(WhatsappProfileName, AdReferralBody, offering) {
+function getSystemMessages(name, AdReferralBody, offering) {
     return [
         {
             role: "system",
             content: `
-            You are an AI assistant for Creo Bank talking to a customer, ${WhatsappProfileName} who clicked on an ad with the content: ${AdReferralBody}.
+            You are an AI assistant for Creo Bank talking to a customer, ${name} who clicked on an ad with the content: ${AdReferralBody}.
             The conversation is taking place over WhatsApp so make responses easy to read over mobile and formatted appropriately for whatsapp.
             You have the credit card options: ${offering}. 
             Provide engaging but concise response.
@@ -157,7 +159,7 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
         throw error;
     }
 }
-
+//async function writeTraitsToSegment(analytics, userId, traits) {
     async function writeTraitsToSegment(SEGMENT_WRITE_KEY, userId, traits) {
     try {
         const endpoint = `https://api.segment.io/v1/identify`;
@@ -173,7 +175,11 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
     };
 
     await fetch(endpoint, requestOptions)
-
+    /*
+        analytics.identify({
+            userId: userId,
+            traits: traits
+        });*/
     } catch (error) {
         console.error("Error writing traits to segment:", error);
         throw error;
