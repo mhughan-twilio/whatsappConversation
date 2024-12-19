@@ -18,15 +18,13 @@ exports.handler = async function(context, event, callback) {
     // Initialize Twilio, Segment, OpenAI clients
     const client = context.getTwilioClient();
     const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
-    const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY }).on('error', console.error);
-
-
+    const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY })
 
     // Define the credit card offering for the AI to reference
     const offering = getCreditCardOffering();
     
     try {
-
+/*
         // Get or create a conversation between the customer and the AI assistant
         console.log("Getting or creating conversation...");
         const conversationSid = await getOrCreateConversation(client, fromNumber, toNumber, lastMessage);
@@ -72,9 +70,9 @@ exports.handler = async function(context, event, callback) {
                 Answer with just the name of the Credit Card from: ${offering}`
             );
         };
-
-        // Write the customer traits to Segment
-        const traits = { 
+*/
+        // Collect all traits
+        const traits = {
             name,
             lastMessage,
             //AdReferralBody, 
@@ -83,17 +81,42 @@ exports.handler = async function(context, event, callback) {
             //creditCardChoice, 
             //escalationRequest 
         };
-        const userId = fromNumber;
 
+        const endpoint = `https://${context.DOMAIN_NAME}/writeTraitsToSegment`;
+        const myHeaders = {
+            'Cookies': `userId=${fromNumber}; traits=${JSON.stringify(traits)}`
+        };
+
+        const requestOptions = {
+            method: "POST",
+            headers: myHeaders
+        };
+
+        await fetch(endpoint, requestOptions)
+
+
+        /*
+        // Call the function to write traits to Segment
+        const writeTraitsUrl = `https://${context.DOMAIN_NAME}/writeTraitsToSegment`;
+        console.log("userId sending to function:", fromNumber);
+
+        const response1 = await client.request({
+            method: 'POST',
+            uri: writeTraitsUrl,
+            body: {
+                userId: fromNumber,
+                traits
+            },
+            cookies: {
+                userId: fromNumber,
+                traits
+            }
+        });*/
+
+/*
+        // Write the customer traits to Segment
         console.log("Writing traits to segment...");
-        analytics.identify({
-            userId: userId,
-        traits: traits 
-            })
-
-
-
-        /*await writeTraitsToSegment(analytics, fromNumber, { 
+        await writeTraitsToSegment(analytics, fromNumber, { 
             name,
             lastMessage,
             //AdReferralBody, 
@@ -104,27 +127,10 @@ exports.handler = async function(context, event, callback) {
         });*/
         console.log("Done.");
 
-        await analytics.flush()
-
-        return {
-            statusCode: 200,
-            body: JSON.stringify(
-              {
-                message: "Go Serverless v1.0! Your function executed successfully!",
-                input: event,
-              },
-              null,
-              2
-            ),
-          };
-
-
     } catch (error) {
         console.error("Error in handler function:", error);
-        return {statusCode: 500, body: JSON.stringify({ error: error.message })};
-        //callback(error);
+        callback(error);
     }
-
 };
 
 async function getOrCreateConversation(client, fromNumber, toNumber, lastMessage) {
@@ -209,18 +215,12 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
 async function writeTraitsToSegment(analytics, userId, traits) {
     try {
         console.log("Writing traits to segment:", traits)
-
-        analytics.identify({
-            userId: userId,
-        traits: traits 
-            })
-        
-        /*await new Promise((resolve) =>
+        await new Promise((resolve) =>
             analytics.identify({
                 userId: userId,
             traits: traits 
                 }, resolve)
-          )*/
+          )
         console.log("Successfully wrote traits to segment. Traits: ", traits);
     } catch (error) {
         console.error("Error writing traits to segment:", error);
