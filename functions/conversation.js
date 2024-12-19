@@ -2,8 +2,6 @@ const { Analytics } = require('@segment/analytics-node');
 const { OpenAI } = require("openai");
 
 exports.handler = async function(context, event, callback) {
-    console.log("Event: ", JSON.stringify(event));
-    
     // Extract the necessary information from the incoming event
     const { 
         To: toNumber, 
@@ -18,9 +16,6 @@ exports.handler = async function(context, event, callback) {
     const client = context.getTwilioClient();
     const openai = new OpenAI({ apiKey: context.OPENAI_API_KEY });
     const analytics = new Analytics({ writeKey: context.SEGMENT_WRITE_KEY }).on('error', console.error);
-
-    // Define the credit card offering for the AI to reference
-    const offering = getCreditCardOffering();
     
     try {
         // Get or create a conversation between the customer and the AI assistant
@@ -36,6 +31,7 @@ exports.handler = async function(context, event, callback) {
         }));
 
         // Set the system messages for OpenAI to guide response
+        const offering = getCreditCardOffering();
         const systemMessages = getSystemMessages(name, AdReferralBody, offering);
         
         // Get the AI response and send it to the customer
@@ -44,12 +40,14 @@ exports.handler = async function(context, event, callback) {
 
         // Analyze the conversation to determine if the customer has chosen a credit card
         const hasChosenCreditCard = await analyzeConversation(openai, formattedMessages, systemMessages, 
-            `Does this conversation indicate that the customer has chosen a credit card? Answer with "yes" or "no".`);
+            `Does this conversation indicate that the customer has chosen a credit card?
+            Answer with just "yes" or "no".`
+        );
 
         // Analyze the conversation to determine if the customer wants to escalate to a real person
         const escalationRequest = await analyzeConversation(openai, formattedMessages, systemMessages, 
             `Does this conversation indicate that the customer wants to escalate to a manager or speak to real person instead of the AI assistant they are currently speaking with? 
-            Answer with "yes" or "no".`
+            Answer with just "yes" or "no".`
         );
 
         // Analyze the conversation to determine which credit card the customer seems to be the best fit for
@@ -57,37 +55,26 @@ exports.handler = async function(context, event, callback) {
         if (hasChosenCreditCard.toLowerCase() === 'yes') {
             creditCardChoice = await analyzeConversation(openai, formattedMessages, systemMessages, 
                 `Which credit card does this customer seem to be the best fit for? 
-                Answer with just the name of the Credit Card from: ${offering}`
+                Answer with just the name of the Credit Card.`
             );
         };
 
         // Write the customer traits to Segment
         analytics.identify({
             userId: fromNumber,
-            traits: {
-                name,
-                lastMessage,
-                AdReferralBody, 
-                AdReferralSourceURL, 
-                hasChosenCreditCard, 
-                creditCardChoice, 
-                escalationRequest
-                } 
-            });
-
+            traits: { name, lastMessage, AdReferralBody, AdReferralSourceURL, hasChosenCreditCard, creditCardChoice, escalationRequest} 
+        });
         await analytics.flush()
 
     } catch (error) {
         console.error("Error in handler function:", error);
         callback(error);
     }
-
 };
 
 async function getOrCreateConversation(client, fromNumber, toNumber, lastMessage) {
     const participantConversations = await client.conversations.v1.participantConversations.list({
-        address: fromNumber,
-        'participantMessagingBinding.proxy_address': toNumber,
+        address: fromNumber, 'participantMessagingBinding.proxy_address': toNumber,
     });
 
     if (participantConversations.length === 0) {
@@ -95,13 +82,11 @@ async function getOrCreateConversation(client, fromNumber, toNumber, lastMessage
         const conversationSid = conversation.sid;
 
         await client.conversations.v1.conversations(conversationSid).participants.create({
-            'messagingBinding.address': fromNumber,
-            'messagingBinding.proxyAddress': toNumber
+            'messagingBinding.address': fromNumber, 'messagingBinding.proxyAddress': toNumber
         });
 
         await client.conversations.v1.conversations(conversationSid).messages.create({
-            body: lastMessage,
-            author: fromNumber
+            body: lastMessage, author: fromNumber
         });
 
         return conversationSid;
