@@ -158,7 +158,7 @@ async function analyzeConversation(openai, messages, systemMessages, question) {
         throw error;
     }
 }
-    async function writeTraitsToSegment(SEGMENT_WRITE_KEY, userId, traits) {
+async function writeTraitsToSegment(analytics, userId, traits) {
     try {
 
     await fetch(endpoint, requestOptions)
